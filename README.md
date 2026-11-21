@@ -1,200 +1,202 @@
 # NoUpdate — Play now, update later.
 
-**NoUpdate** è un payload per PlayStation 5 progettato per neutralizzare il blocco **“aggiornamento richiesto”** in un ambiente modificato, **senza dipendere da una lista predefinita di giochi**. Combina un intervento immediato sul controllo in memoria con modifiche persistenti ai metadati dei titoli riconosciuti come bloccati.
+**NoUpdate** is a PlayStation 5 payload designed to neutralize the **"update required"** block in a modified console environment, **without relying on a predefined list of games**. It combines an immediate patch of the system check in memory with persistent changes to the metadata of titles identified as blocked.
 
-> **La differenza fondamentale:** la patch in RAM agisce finché il payload rimane attivo; le modifiche ai metadati vengono salvate su disco e possono sopravvivere al riavvio. Non si tratta dello stesso intervento e nessuno dei due rende automaticamente compatibile un gioco che richiede funzionalità di firmware non presenti sulla console.
+> **The key distinction:** the in-memory patch works while the payload remains active; metadata changes are saved to storage and can survive a reboot. These are two different mechanisms. Neither one automatically makes a game compatible with firmware that lacks the features it actually requires.
 
-**Versione:** [v1.0.0](https://github.com/zerodayofficial/NoUpdate/releases/tag/v1.0.0) · **Autore:** ZER0DAY · **Licenza:** [GPL-3.0](LICENSE)
+**Version:** [v1.0.0](https://github.com/zerodayofficial/NoUpdate/releases/tag/v1.0.0) · **Author:** ZER0DAY · **License:** [GPL-3.0](LICENSE)
 
-## Il problema che affronta
+## The problem NoUpdate addresses
 
-Alcuni titoli possono incontrare un controllo di sistema che segnala un aggiornamento obbligatorio prima dell'avvio. NoUpdate cerca di intervenire sulla verifica che produce quel blocco, anziché scaricare l'aggiornamento o intervenire sugli eseguibili dei giochi.
+Some games may encounter a system check that requires an update before they can launch. NoUpdate attempts to change the check responsible for this restriction instead of downloading the update or modifying the game's executable.
 
-Il payload utilizza **due livelli complementari**:
+The payload uses **two complementary approaches**:
 
-| Livello | Come agisce | Durata |
+| Mechanism | What it does | How long it lasts |
 | --- | --- | --- |
-| **Sblocco in memoria** | Individua e modifica i punti del controllo di aggiornamento nel processo di sistema, verificando periodicamente la patch. | Finché il processo e il payload rimangono attivi; può essere riapplicato all'avvio successivo. |
-| **Sblocco dei metadati** | Analizza i titoli installati e, quando necessario, modifica i campi di versione nei relativi `param.json`, dopo un backup. | I dati scritti restano sul disco anche dopo il riavvio, salvo rigenerazioni o modifiche successive. |
+| **In-memory bypass** | Locates and modifies recognized update-check locations in the system process, then monitors the patch. | While the process and payload remain active; the patch can be applied again after the next startup. |
+| **Persistent metadata changes** | Examines installed titles and, where necessary, updates version fields in their `param.json` files after creating backups. | Written values remain on storage after a reboot, unless the system or another process changes or regenerates them. |
 
-La scansione è **dinamica**: non esiste una whitelist di title ID. La versione attuale dispone però di un limite interno di **96 titoli analizzabili per esecuzione**.
+Game discovery is **dynamic**: NoUpdate does not use a hardcoded title-ID allowlist. However, the current build can store **up to 96 game records per run**.
 
-## Compatibilità
+## Compatibility
 
-- **Intervallo firmware previsto nel codice:** PS5 **6.xx–13.60**.
-- **Firmware effettivamente testato:** **10.01**.
-- **Ambiente richiesto:** console già predisposta all'esecuzione di payload compatibili, per esempio tramite OnionHEN.
-- **Destinazione d'uso:** console di proprietà, giochi offline e single-player.
+- **Firmware range targeted by the code:** PS5 **6.xx through 13.60**.
+- **Only firmware tested so far:** **10.01**.
+- **Required environment:** a console already capable of running compatible payloads, for example through OnionHEN.
+- **Intended use:** your own console, in offline and single-player scenarios.
 
-**Attenzione alla distinzione tra dichiarato e verificato.** Il codice riconosce l'intervallo 6.xx–13.60, ma questo **non equivale a un collaudo su ogni firmware incluso**. Al di fuori dell'intervallo viene registrato un avviso, senza interrompere automaticamente tutti i tentativi di intervento. L'esito dipende dalla versione del sistema e dalle condizioni della console.
+**Supported in code does not mean tested in practice.** Although the source defines a firmware range from 6.xx to 13.60, **the only firmware currently verified through testing is PS5 firmware 10.01**. The other versions in that range have **not yet been confirmed**. Outside the defined range, the payload logs a warning but does not automatically stop every attempted operation. Actual behavior depends on the system version and console environment.
 
-## Cosa succede quando NoUpdate viene avviato
+## What happens when NoUpdate starts
 
-1. **Avvio e identificazione.** Scrive un messaggio di benvenuto nel kernel log e invia una notifica alla PS5.
-2. **Controllo del firmware.** Legge la versione installata, registra il risultato e segnala se è fuori dall'intervallo previsto.
-3. **Ricerca del controllo di aggiornamento.** Individua il processo di sistema interessato, cerca i punti riconosciuti e tenta la patch in memoria. Se una patch risulta già presente, la riconosce evitando una scrittura superflua.
-4. **Predisposizione dell'autostart.** Se trova l'ELF nei percorsi OnionHEN previsti, cerca di creare il relativo marcatore di avvio automatico. **Non copia autonomamente l'ELF** e non garantisce l'autostart in ambienti che non rispettano queste condizioni.
-5. **Configurazione DNS.** Tenta di applicare il DNS alternativo al profilo di rete disponibile e comunica l'esito. **Nella v1.0.0 questo tentativo è automatico, non disattivabile mediante un'opzione del payload.**
-6. **Scansione della libreria.** Legge i metadati disponibili, esclude le voci che non riconosce come giochi e identifica le condizioni che possono causare il blocco.
-7. **Intervento persistente.** Per ciascun titolo segnalato tenta il backup e la modifica dei file di metadati interessati, poi rilegge i campi scritti per verificarli.
-8. **Resoconto.** Produce notifiche e messaggi di log con numero di giochi rilevati, problemi individuati e risultati delle operazioni.
-9. **Sorveglianza della patch.** Se almeno un punto della patch in memoria è attivo, rimane in esecuzione e lo ricontrolla **ogni 5 secondi**. Se il controllo viene ripristinato, tenta di riapplicare la patch.
+1. **Startup and identification.** Writes a welcome message to the kernel log and displays a notification on the PS5.
+2. **Firmware check.** Reads the installed firmware version, logs the result, and indicates whether it falls outside the expected range.
+3. **Update-check discovery.** Locates the relevant system process, searches for recognized patch sites, and attempts to patch them in memory. If a patch is already present, it recognizes that state and avoids an unnecessary write.
+4. **Autostart setup.** If it finds the ELF in one of the expected OnionHEN locations, it attempts to create the corresponding autostart marker. **It does not copy the ELF automatically** and cannot guarantee autostart in environments that do not support this mechanism.
+5. **DNS configuration.** Attempts to apply the alternative DNS address to an available network profile and reports the outcome. **In v1.0.0, this attempt runs automatically; there is no payload option to disable it.**
+6. **Game library scan.** Reads available metadata, excludes entries it does not recognize as games, and identifies conditions that may trigger the update block.
+7. **Persistent changes.** For each flagged title, attempts to back up and modify the relevant metadata files, then reads the written fields back for verification.
+8. **Status report.** Produces notifications and log entries describing the number of titles found, detected issues, and operation results.
+9. **Patch monitoring.** If at least one in-memory patch site is active, stays running and checks it **every 5 seconds**. If the original behavior returns, it attempts to reapply the patch.
 
-**Se la patch in memoria non viene trovata o applicata**, il payload segnala l'insuccesso e non avvia il ciclo di sorveglianza. Le altre fasi raggiunte dal programma possono comunque essere già state eseguite: non bisogna interpretare una singola notifica come prova che ogni intervento sia riuscito.
+**If the in-memory patch cannot be found or applied**, NoUpdate reports the failure and does not enter its monitoring loop. Other stages reached before that point may already have run, so a single notification should not be treated as proof that every operation succeeded.
 
-## 1. Sblocco immediato: intervento in memoria
+## 1. Immediate bypass: in-memory patching
 
-NoUpdate cerca nel processo di sistema le sequenze compatibili con il controllo di aggiornamento. Quando trova un punto riconosciuto, tenta di neutralizzarlo e controlla il risultato rileggendo la memoria.
+NoUpdate searches the system process for instruction patterns associated with the update check. When it finds a recognized location, it attempts to neutralize the check and verifies the result by reading the process memory again.
 
-Il meccanismo è pensato per essere **globale rispetto al controllo individuato**: non richiede di applicare una patch separata per ogni title ID. Riconosce inoltre un punto già modificato per evitare riscritture non necessarie.
+The mechanism is designed to act **globally on the recognized check**: it does not need a separate memory patch for every title ID. It also recognizes previously modified locations to avoid rewriting them unnecessarily.
 
-Durante l'esecuzione, il payload ricontrolla i punti individuati a intervalli di **5 secondi**. Se riscontra il ripristino delle istruzioni precedenti, prova a riapplicare la patch; se perde la possibilità di leggere il processo, interrompe la sorveglianza e registra l'evento.
+While running, the payload rechecks the discovered patch sites at **5-second intervals**. If it detects that a patched site has been restored, it tries to apply the patch again. If it loses the ability to read the process, it stops monitoring and records the event.
 
-Questa fase opera **sulla memoria del processo di sistema**, non sui file eseguibili installati dei videogiochi. Non è però permanente in RAM: dopo il riavvio il processo deve essere nuovamente modificato, se necessario.
+This stage changes **system-process memory**, not the executable files of installed games. However, the RAM modification itself is **not persistent**: after a restart, the system process must be patched again if necessary.
 
-## 2. Sblocco persistente: analisi e modifica dei metadati
+## 2. Persistent bypass: game metadata
 
-La seconda fase esamina le informazioni dei titoli presenti nella directory `/user/appmeta`, identificando le directory con un formato di title ID riconosciuto e leggendo i relativi file `param.json`.
+The second stage examines titles under `/user/appmeta`. It identifies directories matching the expected title-ID format and reads their `param.json` metadata.
 
-### Quali problemi riconosce
+### Which issues are detected?
 
-- **Requisito firmware:** il campo `requiredSystemSoftwareVersion` indica una versione superiore a quella della PS5.
-- **Disallineamento di versione:** `targetContentVersion` e `contentVersion` differiscono, salvo i casi esclusi dal controllo del codice.
+- **Firmware requirement:** `requiredSystemSoftwareVersion` indicates a firmware version higher than the one installed on the PS5.
+- **Content-version mismatch:** `targetContentVersion` and `contentVersion` do not match, except in cases explicitly excluded by the source logic.
 
-Il payload applica anche filtri su categoria, badge e alcuni identificativi di contenuto, per evitare di trattare indiscriminatamente come giochi le voci di sistema o altri contenuti. **Se non rileva le condizioni previste, non tenta la riscrittura del titolo.**
+The payload also checks category, badge, and certain content identifiers to avoid treating system entries and other non-game content as ordinary games. **If none of the relevant conditions is detected, it does not attempt to rewrite that title's metadata.**
 
-### Quali file può esaminare
+### Which files can be examined?
 
-Per un titolo interessato, il codice prova a lavorare su **fino a tre posizioni**:
+For an affected title, the code checks **up to three locations**:
 
 - `/user/appmeta/<titleId>/param.json`
 - `/user/app/<titleId>/sce_sys/param.json`
 - `/user/patch/<titleId>/sce_sys/param.json`
 
-**“Fino a tre” non significa che tutte siano sempre presenti o modificabili.** Le copie non leggibili o prive dei campi previsti vengono saltate. La disponibilità dei file varia a seconda del titolo e dello stato della console.
+**"Up to three" does not mean all three files always exist or can be modified.** Missing or unreadable copies, or files lacking the expected fields, are skipped. File availability depends on the title and the state of the console.
 
-### Come viene protetto il file prima della modifica
+### Backups and write verification
 
-Prima di scrivere un file, NoUpdate tenta di crearne una copia nella cartella:
+Before changing an eligible file, NoUpdate attempts to save a copy under:
 
 `/data/NoUpdate/backup/<titleId>/`
 
-I nomi dei backup identificano la provenienza: `appmeta.param.json`, `app.param.json` e `patch.param.json`. **Se il backup esiste già, il payload lo conserva e non lo sovrascrive.**
+Backup filenames indicate the source location: `appmeta.param.json`, `app.param.json`, and `patch.param.json`. **Existing backup files are preserved and are not overwritten.**
 
-Se il backup necessario non riesce, la modifica di **quella copia** non viene effettuata. Dopo una scrittura il payload rilegge i byte interessati e registra l'esito. Un errore su un percorso non implica automaticamente che tutti gli altri siano stati modificati con successo.
+If the required backup fails, the payload does **not** modify that particular metadata copy. After writing, it reads back the changed bytes and logs whether verification succeeded. A successful operation at one path does not imply that every other copy was changed successfully.
 
-### Che cosa viene cambiato
+### What does the payload change?
 
-L'intervento è limitato ai campi di versione riconosciuti nel JSON, senza riscrivere l'intero documento:
+The code targets specific recognized version fields in the JSON rather than rewriting the entire document:
 
-- Se è stato rilevato un requisito firmware superiore, il codice tenta di allineare il valore del campo firmware alla versione corrente della console.
-- Se è presente **solo** il problema di disallineamento del contenuto, può scrivere un valore sentinella nel campo `contentVersion`. Questa riscrittura non viene tentata nello stesso passaggio quando è attivo anche il flag di requisito firmware.
+- If a higher firmware requirement was detected, it attempts to align the firmware-requirement field with the console's current firmware version.
+- If the problem is **only** a content-version mismatch, it may write a sentinel value to `contentVersion`. That rewrite is not attempted in the same pass when the firmware-requirement flag is also set.
 
-La modifica è **persistente a livello di file**, ma non è una garanzia assoluta contro una successiva ricostruzione dei metadati da parte del sistema. Né sostituisce librerie, funzioni o altri requisiti reali eventualmente mancanti su un firmware precedente.
+These changes are **persistent at the file level**, but they are not an absolute guarantee against the system regenerating or updating the metadata later. They also do not provide missing firmware libraries, functions, or other capabilities that a game may genuinely require.
 
-## 3. DNS alternativo: comportamento della v1.0.0
+## 3. Alternative DNS: behavior in v1.0.0
 
-NoUpdate include la configurazione di un DNS primario alternativo:
+NoUpdate includes an alternative primary DNS address:
 
 **`62.210.38.117`**
 
-Il codice prova prima a individuare il profilo di rete attivo. Se non ottiene un risultato utile, tenta le impostazioni generali **Ethernet** e **Wi-Fi**.
+The code first attempts to identify the active network profile. If that does not produce a usable result, it falls back to the general **Ethernet** and **Wi-Fi** settings.
 
-Per limitare le modifiche non previste:
+To reduce unintended changes, it:
 
-- legge il valore esistente prima di scrivere;
-- procede se il campo è vuoto o presenta un formato simile a un indirizzo IPv4; il controllo del formato **non equivale a una validazione completa dell'indirizzo**;
-- se trova già lo stesso DNS, non lo riscrive;
-- tenta più letture di verifica dopo la modifica;
-- comunica se il valore è stato impostato, se era già presente o se l'operazione non è riuscita.
+- reads the existing value before writing;
+- proceeds only when the field is empty or resembles an IPv4 address; **this check is not a complete IPv4 validator**;
+- leaves the value unchanged if the configured DNS already matches;
+- makes several verification reads after writing;
+- reports whether the DNS was updated, was already present, or could not be changed.
 
-**Importante:** se è presente un altro DNS primario in formato IPv4, il payload può sostituirlo. Nella build pubblicata **non è prevista una scelta interattiva per saltare questa fase**. La variazione può influire su risoluzione dei domini, privacy e connettività; l'effetto sulla rete può richiedere **riconnessione o riavvio**. L'indirizzo è quello incorporato nel codice, non un servizio gestito o garantito da questo README.
+**Important:** if another primary DNS address is present in IPv4-like format, NoUpdate may replace it. The released **v1.0.0 build has no interactive opt-out for this stage**. DNS changes can affect domain resolution, privacy, and network connectivity; they may require a **network reconnection or console restart** to take effect. The IP address is embedded in the source code, and this README does not guarantee the availability or operation of that external DNS service.
 
-## 4. Autostart e continuità dopo il riavvio
+## 4. Autostart and behavior after reboot
 
-NoUpdate prova a predisporre l'avvio automatico tramite OnionHEN **soltanto se trova l'ELF** in uno dei due percorsi che riconosce:
+NoUpdate attempts to enable OnionHEN autostart **only when it finds its ELF** at one of these recognized locations:
 
 - `/user/data/OnionHEN/payloads/NoUpdate.elf`
 - `/data/OnionHEN/payloads/NoUpdate.elf`
 
-In questo caso controlla la presenza del relativo file `.auto_start` e, se assente, tenta di crearlo. Un marcatore già esistente viene lasciato invariato.
+It then checks for the associated `.auto_start` marker and tries to create it if it does not exist. An existing marker is left unchanged.
 
-Questa funzione **non installa OnionHEN**, non trasferisce il payload e non assicura che ogni versione dell'ambiente supporti lo stesso comportamento. L'autostart permette di riprovare la patch volatile a un nuovo avvio; **i metadati già modificati sono invece una forma separata di persistenza**.
+This feature **does not install OnionHEN**, transfer the payload, or guarantee identical behavior across all OnionHEN versions. Autostart allows the temporary memory patch to be attempted again at a subsequent startup. **Previously written game metadata, by contrast, is a separate form of persistence.**
 
-## 5. Notifiche e diagnostica
+## 5. Notifications and diagnostics
 
-Il payload utilizza due canali complementari:
+NoUpdate uses two complementary reporting channels.
 
-**Notifiche a schermo** per i risultati immediati:
+**On-screen notifications** summarize immediate results:
 
-- avvio del payload;
-- DNS impostato, già attivo oppure non modificato;
-- patch globale non applicata, attiva senza blocchi rilevati oppure attiva con elenco giochi non leggibile;
-- numero di titoli con condizioni di blocco;
-- nome e identificativo dei **primi 8 titoli** interessati, con segnalazione degli eventuali altri nel log;
-- conteggio dei titoli per cui l'intervento sui metadati è stato riportato come riuscito.
+- payload startup;
+- DNS successfully set, already active, or unchanged due to an error;
+- global patch not applied, active with no forced updates detected, or active while the game list is unreadable;
+- number of titles matching update-block conditions;
+- name and title ID of the **first 8 affected titles**, with additional entries referenced in the kernel log;
+- count of games whose persistent metadata changes were reported as successful.
 
-**Kernel log (`klog`)** per la diagnosi approfondita:
+**Kernel log (`klog`)** provides more detailed diagnostics:
 
-- versione firmware, processo analizzato ed esito della ricerca dei punti di patch;
-- scansione dei titoli, versioni richieste, flag **FW** e **UPD**;
-- risultati di backup, scrittura e verifica per i diversi file di metadati;
-- stato dei tentativi DNS e dell'autostart;
-- perdita della patch in memoria e relativi tentativi di ripristino.
+- detected firmware, process information, and patch-search results;
+- title scanning, required versions, and **FW** / **UPD** flags;
+- backup, write, and verification outcomes for individual metadata locations;
+- DNS and autostart operation results;
+- loss of the memory patch and attempts to restore it.
 
-Le notifiche forniscono una sintesi, **non una certificazione di compatibilità di ogni gioco**. Per analizzare un risultato parziale o un errore, il log è la fonte più dettagliata.
+Notifications are a summary, **not proof that every game will work**. When investigating a partial result or failure, the kernel log provides the more detailed record.
 
-## 6. Sicurezza, limiti e ripristino
+## 6. Safety measures, limitations, and recovery
 
-**Misure presenti nel codice**
+**Safeguards implemented in the source**
 
-- Backup prima della scrittura dei metadati interessati.
-- Conservazione dei backup già esistenti.
-- Verifica in lettura dei campi modificati.
-- Riconoscimento delle patch in RAM già applicate.
-- Segnalazione dei fallimenti senza presentare ogni tentativo come riuscito.
-- Nessuna procedura esplicita di cancellazione dei salvataggi o dei giochi.
+- Backup attempts before eligible metadata writes.
+- Existing backups are kept rather than overwritten.
+- Read-back verification of modified fields.
+- Detection of in-memory patches that are already active.
+- Explicit logging of failures rather than treating every attempt as successful.
+- No explicit procedure for deleting installed games or their save data.
 
-**Limiti da conoscere**
+**Known limitations**
 
-- La scansione gestisce **massimo 96 titoli** per esecuzione.
-- L'intervallo firmware dichiarato non rappresenta un test esaustivo; **10.01 è il firmware testato**.
-- Alcuni file possono mancare, essere illeggibili oppure avere metadati inattesi.
-- Un backup riuscito non rende impossibile un errore di scrittura, un ripristino successivo da parte del sistema o una perdita di dati dovuta ad altre cause.
-- Non è implementato un **ripristino automatico**: i backup consentono un recupero manuale da valutare con attenzione.
-- Il DNS viene tentato **automaticamente** e può modificare la configurazione esistente.
-- L'intervento sulla richiesta di aggiornamento non rimuove le dipendenze tecniche effettive di un gioco.
+- The payload stores **up to 96 game records** per execution.
+- The stated firmware range is not a comprehensive test matrix; **10.01 remains the only tested firmware**.
+- Metadata files may be missing, inaccessible, or unexpectedly formatted.
+- A successful backup cannot rule out write errors, later system changes, or data loss from other causes.
+- There is **no automatic restore feature** in v1.0.0; existing backups may support carefully performed manual recovery.
+- DNS configuration is attempted **automatically** and may change existing network settings.
+- Bypassing an update prompt does not eliminate a game's actual technical dependencies.
 
-Prima di utilizzare software che modifica metadati persistenti, è prudente conservare anche una copia indipendente dei dati importanti. La presenza di backup automatici non sostituisce una procedura di recovery verificata.
+Before using software that changes persistent metadata, keep an independent backup of important data. The presence of automatic backups is not a substitute for a tested recovery procedure.
 
-## Che cosa NoUpdate non fa
+## What NoUpdate does not do
 
-- Non scarica o installa aggiornamenti.
-- Non modifica gli eseguibili dei giochi né fornisce contenuti di gioco.
-- Non aggiunge funzioni firmware mancanti e **non garantisce l'avvio di ogni titolo**.
-- Non fornisce licenze o strumenti per aggirare la loro verifica.
-- Non richiede una lista preimpostata di title ID.
-- Non include nella v1.0.0 un comando di ripristino automatico dei metadati.
-- Non garantisce il funzionamento su ogni firmware dell'intervallo dichiarato.
+- It does not download or install game updates.
+- It does not modify game executables or provide game content.
+- It does not add missing firmware features and **cannot guarantee that every title will launch**.
+- It does not supply game licenses or tools for bypassing license validation.
+- It does not require a predefined title-ID list.
+- It does not include an automatic metadata-restore command in v1.0.0.
+- It does not guarantee operation on every firmware within the stated range.
 
-## In sintesi
+## Summary
 
-**NoUpdate affronta lo stesso problema su due piani diversi:** tenta di neutralizzare in tempo reale il controllo di aggiornamento e, separatamente, corregge i metadati dei giochi riconosciuti come bloccati, conservando una copia degli originali prima delle modifiche. In aggiunta gestisce notifiche e log, tenta l'autostart tramite OnionHEN e applica automaticamente il DNS configurato nella build.
+**NoUpdate approaches the same problem in two different ways:** it attempts to neutralize the update check in real time and, separately, updates metadata for games identified as blocked while preserving copies of the original files. It also provides notifications and logs, attempts OnionHEN autostart, and automatically applies the DNS address configured in the build.
 
-La sua efficacia dipende dal firmware, dall'ambiente payload, dal formato dei metadati e dalle caratteristiche reali di ciascun titolo. **Testato su PS5 firmware 10.01; intervallo previsto nel codice 6.xx–13.60.**
+Results depend on firmware, payload environment, metadata format, and each game's actual requirements.
 
-## File del progetto
+**Tested only on PS5 firmware 10.01 so far. Firmware range targeted by the code: 6.xx–13.60. Other firmware versions are not yet verified.**
 
-- [`src/Program.cs`](src/Program.cs) — sorgente C# del payload.
-- [`src/NoUpdate.csproj`](src/NoUpdate.csproj) — definizione del progetto.
-- [`release/NoUpdate.elf`](release/NoUpdate.elf) — binario della build pubblicata.
-- [`release/SHA256SUMS.txt`](release/SHA256SUMS.txt) — impronta SHA-256 del binario.
-- [`LICENSE`](LICENSE) — licenza GPL-3.0.
+## Project files
 
-**Release:** [NoUpdate v1.0.0 e relativi file](https://github.com/zerodayofficial/NoUpdate/releases/tag/v1.0.0).
+- [`src/Program.cs`](src/Program.cs) — C# payload source code.
+- [`src/NoUpdate.csproj`](src/NoUpdate.csproj) — project definition.
+- [`release/NoUpdate.elf`](release/NoUpdate.elf) — compiled payload included in this release.
+- [`release/SHA256SUMS.txt`](release/SHA256SUMS.txt) — SHA-256 checksum for the ELF.
+- [`LICENSE`](LICENSE) — GPL-3.0 license.
 
-## Note legali e crediti
+**Release:** [NoUpdate v1.0.0 and downloadable assets](https://github.com/zerodayofficial/NoUpdate/releases/tag/v1.0.0).
 
-Progetto destinato all'uso sulla **propria console** in contesti **offline e single-player**. Distribuito **così com'è**, senza garanzie di funzionamento, compatibilità o assenza di effetti indesiderati. Chi lo utilizza è responsabile della configurazione della propria console e dei propri dati.
+## Disclaimer and credits
 
-**Made by ZER0DAY** · [Supporto su Ko-fi](https://ko-fi.com/zzer0dayyy)
+Intended for use on **your own console**, in **offline and single-player** scenarios. Distributed **as is**, without any warranty of functionality, compatibility, or freedom from unintended effects. You are responsible for your console configuration and data.
+
+**Made by ZER0DAY** · [Support on Ko-fi](https://ko-fi.com/zzer0dayyy)

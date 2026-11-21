@@ -1,0 +1,39 @@
+# .NET build outputs
+**/bin/
+**/obj/
+**/out/
+**/publish/
+artifacts/
+
+# IDE and user settings
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Debug artifacts and local build byproducts
+*.pdb
+*.mdb
+*.dll
+*.exe
+*.cache
+*.tmp
+*.log
+*.dmp
+*.ilk
+*.exp
+
+# Build-generated ELF files are not source artifacts
+*.elf
+!release/
+!release/NoUpdate.elf
+
+# OS and editor temporary files
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo

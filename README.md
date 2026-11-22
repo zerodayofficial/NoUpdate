@@ -1,96 +1,122 @@
-# NoUpdate
+# NoUpdate — Play Now, Update Later.
 
-**Play now, update later.**
+**NoUpdate** is a PlayStation 5 payload designed to remove the **"Update Required"** restriction that can prevent installed games from launching, especially after the console has detected or attempted to download a game update.
 
-NoUpdate is a PS5 payload that removes the "update required" block globally and persistently for every installed game. It does not rely on a hardcoded title list: it reads the console's own metadata (`/user/appmeta/<TITLEID>/param.json`) at runtime, so the same ELF works with any library.
+It works globally, automatically detecting installed games and addressing recognized update-related restrictions without requiring individual game patches or manual configuration.
 
-## Features
+**One payload. Your entire game library. No manual game selection.**
 
-- Global in-memory patch of the update check in SceShellCore.
-- Pattern scanning, no fixed offsets.
-- Firmware range 6.xx to 13.60.
-- Persistent metadata rewrite for games that require a newer firmware or have a pending update, with automatic backup and read-back verification.
-- Nomadic DNS (`62.210.38.117`) applied to the active profile and to the `eth`/`wifi` entries, with a restart prompt.
-- On every launch, reports **every installed game** by title ID and name, with status (`FW x.xx`, `update`, `blocked`, `ok`).
-- Manual launch only: it does not create an OnionHEN autostart marker and removes a stale one left by older builds.
+## Why do you need NoUpdate?
 
-## Installation
+Imagine this situation.
 
-1. Copy `release/NoUpdate.elf` to `/data/OnionHEN/payloads/` on the PS5.
-2. Launch it manually from the OnionHEN Toolbox.
-3. Reboot when prompted, so the DNS change takes effect.
-4. Launch it again whenever you want to re-apply the patch and see the game list.
+You're using your jailbroken PS5, and at some point, your console accidentally connects to the Internet.
 
-There is no autostart entry: the payload runs only when you launch it. The metadata changes are written to disk and survive a reboot even without the payload, and the DNS setting is stored in the console registry.
+The PS5 detects that an update is available for one or more installed games and attempts to download it.
 
-## What it does
+Later, you disconnect from the Internet and try to launch a game that was previously working.
 
-- Patches the update check in SceShellCore in memory (pattern scan, no fixed offsets).
-- For each game that needs it, rewrites the metadata and keeps a backup under `/data/NoUpdate/backup/<TITLEID>/`:
-  - `/user/appmeta/<TITLEID>/param.json`
-  - `/user/app/<TITLEID>/sce_sys/param.json`
-  - `/user/patch/<TITLEID>/sce_sys/param.json`
-- Treats `contentVersion` starting with `99.` as already blocked.
-- Applies the Nomadic DNS to the profile, `eth` and `wifi` registry entries; a restart is required for the resolver to use it.
+But instead of starting normally, the console displays an **"Update Required"** message, preventing you from playing until the game is updated.
 
-## Where the game names come from
+This can happen even if you never intended to update the game in the first place.
 
-No title ID or game name is compiled into the ELF. At runtime the payload:
+**This is exactly the kind of problem NoUpdate was created to solve.**
 
-1. Scans `/user/appmeta` for 9-character title IDs (`[A-Z]{4}\d{5}`).
-2. Reads `/user/appmeta/<TITLEID>/param.json`.
-3. Resolves the name from `localizedParameters` -> `defaultLanguage` -> `titleName`; if missing, it uses the first `titleName` in `localizedParameters`; if that is missing too, it uses the title ID.
-4. Reads `contentVersion`, `targetContentVersion`, `requiredSystemSoftwareVersion`, `contentId`, `contentBadgeType` and `applicationCategoryType` to decide whether the entry is a game and whether it must be blocked.
+NoUpdate attempts to remove the update-related launch restriction, allowing affected games to start without forcing you to download or install the pending update.
 
-Because the list is built from the console every time, installing or removing a game changes the report automatically. The payload handles up to 96 games; notification popups truncate names to 40 characters, while the full names are written to the klog.
+It can also address certain restrictions associated with firmware requirements and mismatched game-version metadata.
 
-## Building
+You don't need to manually modify game files, search for individual patches, or configure anything for each installed title.
 
-Requirements:
+**Just launch NoUpdate and let it detect the affected games automatically.**
 
-- .NET 10 SDK
-- The SharpProspero payload toolchain (NativeAOT settings and PS5 runtime support)
+## How does NoUpdate work?
 
-Set `SHARPPROSPERO_ROOT` to your SharpProspero checkout and run:
+NoUpdate combines several mechanisms to identify and address update-related restrictions.
 
-```powershell
-$env:SHARPPROSPERO_ROOT = "C:\path\to\SharpProspero"
-.\build.ps1
-```
+### 1. Automatic game detection
 
-Or call the toolchain directly:
+NoUpdate scans the games installed on your console, automatically identifying their names, title IDs, firmware requirements, and update-related information.
 
-```powershell
-& "$env:SHARPPROSPERO_ROOT\build\build-app.ps1" `
-  -ProjectPath ".\src\NoUpdate.csproj" `
-  -Payload -Output Folder -OutputFolder ".\out"
-```
+It doesn't rely on a predefined list of supported games.
 
-The resulting ELF is written to the output folder.
+### 2. Update restriction detection
 
-## Diagnostics
+The payload analyzes installed games to identify recognized conditions that may prevent them from launching, including pending update-related version mismatches and firmware requirements.
 
-The payload writes diagnostic lines to the klog with the `sp:cpb:` prefix (`titles`, `title`, `dns`, `persist`, `autostart-off`, ...). They are not written to `/data/OnionHEN/OnionHEN.log`.
+Games without a detected issue are left unchanged.
 
-## Tested on
+### 3. Global system patch
 
-- PS5 firmware **10.01**.
+NoUpdate searches for recognized update-check locations within the PS5 system process and attempts to neutralize the restriction directly in memory.
 
-The payload accepts firmware from 6.xx to 13.60, but 10.01 is the version it was tested on.
+This allows the payload to operate globally rather than requiring an individual memory patch for each game.
 
-## Notes
+### 4. Persistent game metadata changes
 
-- Use it on your own console, offline, for single-player use.
-- Before changing a metadata file, the payload creates a backup under `/data/NoUpdate/backup/<titleId>/`.
-- The DNS change is written to the active network profile and needs a reboot or a reconnect to be used by the resolver.
-- No warranty. Use at your own risk.
+When necessary, NoUpdate attempts to modify specific metadata fields associated with the restriction.
 
-## Support my work
+Original metadata files are backed up before eligible modifications.
 
-If NoUpdate saves you some time, you can support my work on Ko-fi:
+These changes are saved to storage and can survive a console restart.
 
-**https://ko-fi.com/zzer0dayyy**
+The memory patch itself is temporary and may need to be applied again after rebooting.
 
-## Credits
+### 5. Game library reporting
 
-Made by **ZER0DAY**.
+NoUpdate reports the installed games it detects, including their names, title IDs, and update-related status.
+
+Detailed diagnostic information is also available through the kernel log.
+
+## First-Time Activation
+
+**After activating NoUpdate for the first time, a one-time PS5 restart is required to complete the initial setup.**
+
+Once the console has restarted, the initial setup does not normally need to be repeated.
+
+You can launch NoUpdate manually again whenever necessary to reapply its temporary memory patch.
+
+**You do not need to restart the console after every launch.**
+
+## Key Features
+
+- **Global update restriction bypass** — targets recognized system-level update checks.
+- **Automatic detection** — scans installed games without a predefined title list.
+- **Pending update restriction handling** — designed to address launch blocks that may appear after accidental online connections or attempted game updates.
+- **Persistent metadata modifications** — supported changes can remain effective after rebooting.
+- **Automatic backups** — preserves original metadata before eligible modifications.
+- **No game executable modification** — does not rewrite installed game binaries.
+- **Game status reporting** — displays detected titles and relevant information.
+- **Manual activation** — no automatic payload startup.
+
+## Firmware Compatibility
+
+**Targeted firmware range: PS5 6.xx – 13.60**
+
+**Currently tested and verified on: PS5 firmware 10.01**
+
+Although NoUpdate is designed to support firmware versions from 6.xx through 13.60, it has currently been tested only on **firmware 10.01**.
+
+Compatibility with other firmware versions has not yet been confirmed.
+
+The stated firmware range reflects the versions targeted by the source code and does not guarantee identical results across all versions.
+
+## Important Information
+
+NoUpdate does not download or install game updates, upgrade your system firmware, or provide missing firmware functionality.
+
+It is designed to address recognized update-related launch restrictions, not to make incompatible games compatible with older system software.
+
+If a game genuinely requires features unavailable on your installed firmware, removing the update prompt may not be sufficient to launch it.
+
+Results may vary depending on the game, firmware version, and console environment.
+
+NoUpdate is intended for use on your own console in an offline, single-player environment.
+
+---
+
+**NoUpdate — Play Now, Update Later.**
+
+Developed by **ZER0DAY**
+
+Support the project — https://ko-fi.com/zzer0dayyy

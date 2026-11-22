@@ -78,9 +78,6 @@ internal static unsafe class Program
 
         var io = new PayloadKernelIo(pargs);
 
-        // Manual launch only: never create the OnionHEN autostart marker, and
-        // remove one left behind by older builds so the payload cannot start
-        // together with OnionHEN.
         DisableAutostart();
 
         uint fw = PayloadKernel.GetFirmwareVersion(io);
@@ -1599,8 +1596,6 @@ internal static unsafe class Program
             return;
         }
 
-        // The flag key is not present on every firmware/profile. A failed read must
-        // not stop the write: treat it as automatic DNS and continue.
         int flagReadRc = getInt(flagId, &flag);
         if (flagReadRc != 0)
         {
@@ -1640,8 +1635,6 @@ internal static unsafe class Program
             {
                 KlogDnsSet(tag, -1, flagRc, true);
                 KlogDns(tag, "flag-fail"u8);
-                // Keep going: some firmware applies the string even when the flag
-                // identifier is not writable.
             }
             else
             {
@@ -1673,8 +1666,6 @@ internal static unsafe class Program
                 verify[i] = 0;
             getStrRc = getStr(primaryId, verify, FieldSize);
             getIntRc = getInt(flagId, &verifyFlag);
-            // The string is the value that matters. Some firmware does not keep
-            // the manual-DNS flag readable after the write; do not fail on it.
             match = getStrRc == 0 && BytesEqualAscii(verify, "62.210.38.117"u8);
             if (match)
                 break;
@@ -1711,8 +1702,6 @@ internal static unsafe class Program
         for (int i = 0; i < count; i++)
             buf[i] = value[i];
 
-        // The SDK wrapper passes strlen+1; some firmware instead expects the
-        // fixed 16-byte field. Try the exact length first, then the field size.
         int rc = setStr(id, buf, (ulong)(count + 1));
         if (rc != 0)
             rc = setStr(id, buf, FieldSize);

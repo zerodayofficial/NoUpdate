@@ -78,6 +78,11 @@ internal static unsafe class Program
 
         var io = new PayloadKernelIo(pargs);
 
+        // Manual launch only: never create the OnionHEN autostart marker, and
+        // remove one left behind by older builds so the payload cannot start
+        // together with OnionHEN.
+        DisableAutostart();
+
         uint fw = PayloadKernel.GetFirmwareVersion(io);
         if (fw == 0)
         {
@@ -140,6 +145,7 @@ internal static unsafe class Program
         if (pid <= 0)
         {
             PayloadCrt.Klog("sp:cpb:proc-fail\n\0"u8);
+            RunPersistentWork(fw, false);
             return 4;
         }
         KlogHex("sp:cpb:pid "u8, (ulong)pid);
@@ -183,6 +189,7 @@ internal static unsafe class Program
             if (!FindTextByProbe(pid, out textStart, out textSize))
             {
                 PayloadCrt.Klog("sp:cpb:text-none\n\0"u8);
+                RunPersistentWork(fw, false);
                 return 10;
             }
         }
@@ -298,25 +305,7 @@ internal static unsafe class Program
         
         
         
-        EnsureAutostart();
-
-        
-        
-        int dnsResult = ApplyNomadicDns();
-        ReportDns(dnsResult);
-
-        
-        
-        
-        
-        var games = new GameInfo[MaxGames];
-        int gameCount = ScanGames(games, fw, out int scannedDirs, out int scannedParams, out bool scanOk);
-        KlogScanLine(scannedDirs, scannedParams, gameCount, scanOk);
-
-        
-        
-        int persisted = PersistBlockedGames(games, gameCount, fw);
-        ReportGames(games, gameCount, scanOk, patchApplied, persisted);
+        RunPersistentWork(fw, patchApplied);
 
         if (!patchApplied)
             return 12;
@@ -376,6 +365,7 @@ internal static unsafe class Program
         public uint RequiredFw;
         public int Flags;
         public int PersistFlags;
+        public bool AlreadyBlocked;
     }
 
     
@@ -465,10 +455,17 @@ internal static unsafe class Program
             game.ContentVersion[0] == (byte)'9' &&
             game.ContentVersion[1] == (byte)'9' &&
             game.ContentVersion[2] == (byte)'.';
-        if (!versionSentinel && game.TargetVersionLength != 0 &&
-            !BytesEqual(game.TargetVersion, game.TargetVersionLength,
-                        game.ContentVersion, game.ContentVersionLength))
+        if (versionSentinel)
+        {
+            game.AlreadyBlocked = true;
+            game.PersistFlags = PersistOk;
+        }
+        else if (game.TargetVersionLength != 0 &&
+                 !BytesEqual(game.TargetVersion, game.TargetVersionLength,
+                             game.ContentVersion, game.ContentVersionLength))
+        {
             game.Flags |= FlagUpdate;
+        }
 
         if (game.ContentVersionLength == 0 && game.RequiredFw == 0)
             return null;
@@ -1010,9 +1007,16 @@ internal static unsafe class Program
     private static void ReportGames(GameInfo[] games, int gameCount, bool scanOk, bool patchApplied, int persisted)
     {
         int forceCount = 0;
+        int blockedCount = 0;
         for (int i = 0; i < gameCount; i++)
+        {
             if (games[i].Flags != 0)
                 forceCount++;
+            else if (games[i].AlreadyBlocked)
+                blockedCount++;
+        }
+
+        int reportCount = gameCount;
 
         byte[] line = new byte[320];
         int n = 0;
@@ -1020,6 +1024,10 @@ internal static unsafe class Program
         n = AppendDecimal(line, n, gameCount);
         n = Append(line, n, " force="u8);
         n = AppendDecimal(line, n, forceCount);
+        n = Append(line, n, " blocked="u8);
+        n = AppendDecimal(line, n, blockedCount);
+        n = Append(line, n, " persisted="u8);
+        n = AppendDecimal(line, n, persisted);
         n = Append(line, n, "\n"u8);
         KlogLine(line, n);
 
@@ -1036,7 +1044,7 @@ internal static unsafe class Program
             n = Append(line, n, " flags="u8);
             if (game.Flags == 0)
             {
-                n = AppendByte(line, n, (byte)'0');
+                n = AppendByte(line, n, game.AlreadyBlocked ? (byte)'B' : (byte)'0');
             }
             else
             {
@@ -1062,46 +1070,30 @@ internal static unsafe class Program
             KlogLine(line, n);
         }
 
-        if (!patchApplied)
-        {
-            NotifyText("ZER0DAY: patch NOT applied"u8);
-            return;
-        }
-
         if (!scanOk)
         {
-            NotifyText("ZER0DAY: global patch active - game list unreadable"u8);
+            NotifyText("ZER0DAY: game list unreadable"u8);
             return;
         }
 
-        if (forceCount == 0)
+        if (!patchApplied)
+            NotifyText("ZER0DAY: global patch NOT applied"u8);
+
+        if (reportCount == 0)
         {
-            NotifyText("ZER0DAY: global patch active - no forced updates"u8);
+            NotifyText("ZER0DAY: no games found"u8);
             return;
         }
 
         n = 0;
-        n = Append(line, n, "ZER0DAY: global patch active - "u8);
-        n = AppendDecimal(line, n, forceCount);
-        n = Append(line, n, " force-update"u8);
+        n = Append(line, n, "ZER0DAY: games found - "u8);
+        n = AppendDecimal(line, n, reportCount);
+        n = Append(line, n, " games"u8);
         NotifyLine(line, n);
 
-        int shown = 0;
         for (int i = 0; i < gameCount; i++)
         {
             GameInfo game = games[i];
-            if (game.Flags == 0)
-                continue;
-            if (shown == 8)
-            {
-                n = 0;
-                n = Append(line, n, "ZER0DAY: other "u8);
-                n = AppendDecimal(line, n, forceCount - shown);
-                n = Append(line, n, " titles in klog"u8);
-                NotifyLine(line, n);
-                break;
-            }
-
             n = 0;
             n = Append(line, n, "ZER0DAY "u8);
             n = Append(line, n, game.TitleId.AsSpan(0, 9));
@@ -1116,22 +1108,39 @@ internal static unsafe class Program
                 n = Append(line, n, "FW "u8);
                 n = AppendBcd(line, n, game.RequiredFw);
             }
-            else
+            else if ((game.Flags & FlagUpdate) != 0)
             {
                 n = Append(line, n, "update"u8);
             }
+            else if (game.AlreadyBlocked)
+            {
+                n = Append(line, n, "blocked"u8);
+            }
+            else
+            {
+                n = Append(line, n, "ok"u8);
+            }
             NotifyLine(line, n);
-            shown++;
         }
 
-        if (persisted > 0)
-        {
-            n = 0;
-            n = Append(line, n, "ZER0DAY: update permanently blocked for "u8);
-            n = AppendDecimal(line, n, persisted);
-            n = Append(line, n, " games"u8);
-            NotifyLine(line, n);
-        }
+        n = 0;
+        n = Append(line, n, "ZER0DAY: "u8);
+        n = AppendDecimal(line, n, reportCount);
+        n = Append(line, n, " games listed"u8);
+        NotifyLine(line, n);
+    }
+
+    private static void RunPersistentWork(uint fw, bool patchApplied)
+    {
+        int dnsResult = ApplyNomadicDns();
+        ReportDns(dnsResult);
+
+        var games = new GameInfo[MaxGames];
+        int gameCount = ScanGames(games, fw, out int scannedDirs, out int scannedParams, out bool scanOk);
+        KlogScanLine(scannedDirs, scannedParams, gameCount, scanOk);
+
+        int persisted = PersistBlockedGames(games, gameCount, fw);
+        ReportGames(games, gameCount, scanOk, patchApplied, persisted);
     }
 
     private static void KlogLine(byte[] buffer, int length)
@@ -1543,16 +1552,12 @@ internal static unsafe class Program
                 "prof"u8, ref changed, ref already, ref failed);
         }
 
-        
-        if (changed == 0 && already == 0)
-        {
-            ApplyDnsProfile(getStr, setStr, getInt, setInt,
-                RegNetIpDnsFlag, RegNetIpPrimaryDns, RegNetIpSecondaryDns,
-                "eth"u8, ref changed, ref already, ref failed);
-            ApplyDnsProfile(getStr, setStr, getInt, setInt,
-                RegWifiIpDnsFlag, RegWifiIpPrimaryDns, RegWifiIpSecondaryDns,
-                "wifi"u8, ref changed, ref already, ref failed);
-        }
+        ApplyDnsProfile(getStr, setStr, getInt, setInt,
+            RegNetIpDnsFlag, RegNetIpPrimaryDns, RegNetIpSecondaryDns,
+            "eth"u8, ref changed, ref already, ref failed);
+        ApplyDnsProfile(getStr, setStr, getInt, setInt,
+            RegWifiIpDnsFlag, RegWifiIpPrimaryDns, RegWifiIpSecondaryDns,
+            "wifi"u8, ref changed, ref already, ref failed);
 
         PayloadDlfcn.Dlclose(handle);
         if (changed > 0)
@@ -1588,10 +1593,19 @@ internal static unsafe class Program
         }
 
         int flag = 0;
-        if (getStr(primaryId, oldPrimary, FieldSize) != 0 || getInt(flagId, &flag) != 0)
+        if (getStr(primaryId, oldPrimary, FieldSize) != 0)
         {
             KlogDns(tag, "no-key"u8);
             return;
+        }
+
+        // The flag key is not present on every firmware/profile. A failed read must
+        // not stop the write: treat it as automatic DNS and continue.
+        int flagReadRc = getInt(flagId, &flag);
+        if (flagReadRc != 0)
+        {
+            flag = 0;
+            KlogDns(tag, "no-flag"u8);
         }
 
         getStr(secondaryId, oldSecondary, FieldSize);
@@ -1607,7 +1621,7 @@ internal static unsafe class Program
             return;
         }
 
-        if (!empty && BytesEqualAscii(oldPrimary, "62.210.38.117"u8))
+        if (!empty && BytesEqualAscii(oldPrimary, "62.210.38.117"u8) && flag == 1)
         {
             KlogDns(tag, "already"u8);
             already++;
@@ -1625,11 +1639,14 @@ internal static unsafe class Program
             if (flagRc != 0)
             {
                 KlogDnsSet(tag, -1, flagRc, true);
-                KlogDns(tag, "write-fail"u8);
-                failed++;
-                return;
+                KlogDns(tag, "flag-fail"u8);
+                // Keep going: some firmware applies the string even when the flag
+                // identifier is not writable.
             }
-            PayloadThread.usleep(100_000);
+            else
+            {
+                PayloadThread.usleep(100_000);
+            }
         }
 
         int primaryRc = SetRegString(setStr, primaryId, "62.210.38.117\0"u8);
@@ -1656,8 +1673,9 @@ internal static unsafe class Program
                 verify[i] = 0;
             getStrRc = getStr(primaryId, verify, FieldSize);
             getIntRc = getInt(flagId, &verifyFlag);
-            match = getStrRc == 0 && BytesEqualAscii(verify, "62.210.38.117"u8) &&
-                    getIntRc == 0 && verifyFlag == 1;
+            // The string is the value that matters. Some firmware does not keep
+            // the manual-DNS flag readable after the write; do not fail on it.
+            match = getStrRc == 0 && BytesEqualAscii(verify, "62.210.38.117"u8);
             if (match)
                 break;
             PayloadThread.usleep(200_000);
@@ -1693,7 +1711,12 @@ internal static unsafe class Program
         for (int i = 0; i < count; i++)
             buf[i] = value[i];
 
-        return setStr(id, buf, FieldSize);
+        // The SDK wrapper passes strlen+1; some firmware instead expects the
+        // fixed 16-byte field. Try the exact length first, then the field size.
+        int rc = setStr(id, buf, (ulong)(count + 1));
+        if (rc != 0)
+            rc = setStr(id, buf, FieldSize);
+        return rc;
     }
 
     private static int SetRegInt(
@@ -1845,23 +1868,14 @@ internal static unsafe class Program
     
     
     
-    private static void EnsureAutostart()
+    private static void DisableAutostart()
     {
-        EnsureAutostartAt("/user/data/OnionHEN/payloads/NoUpdate.elf\0"u8);
-        EnsureAutostartAt("/data/OnionHEN/payloads/NoUpdate.elf\0"u8);
+        RemoveAutostartAt("/user/data/OnionHEN/payloads/NoUpdate.elf\0"u8);
+        RemoveAutostartAt("/data/OnionHEN/payloads/NoUpdate.elf\0"u8);
     }
 
-    private static void EnsureAutostartAt(ReadOnlySpan<byte> elfPath)
+    private static void RemoveAutostartAt(ReadOnlySpan<byte> elfPath)
     {
-        byte* path = stackalloc byte[elfPath.Length];
-        for (int i = 0; i < elfPath.Length; i++)
-            path[i] = elfPath[i];
-
-        int fd = PayloadIo.open(path, PayloadFileSystem.O_RDONLY);
-        if (fd < 0)
-            return; 
-        PayloadIo.close(fd);
-
         byte* marker = stackalloc byte[elfPath.Length + 12];
         int nameLength = elfPath.Length - 1; 
         for (int i = 0; i < nameLength; i++)
@@ -1871,25 +1885,8 @@ internal static unsafe class Program
         for (int i = 0; i < suffix.Length; i++)
             marker[nameLength + i] = suffix[i];
 
-        fd = PayloadIo.open(marker, PayloadFileSystem.O_RDONLY);
-        if (fd >= 0)
-        {
-            PayloadIo.close(fd);
-            return; 
-        }
-
-        fd = PayloadIo.open(marker,
-            PayloadFileSystem.O_WRONLY | PayloadFileSystem.O_CREAT | PayloadFileSystem.O_TRUNC,
-            (ushort)0x1A4);
-        if (fd >= 0)
-        {
-            PayloadIo.close(fd);
-            PayloadCrt.Klog("sp:cpb:autostart-on\n\0"u8);
-        }
-        else
-        {
-            PayloadCrt.Klog("sp:cpb:autostart-fail\n\0"u8);
-        }
+        if (PayloadFileSystem.unlink(marker) == 0)
+            PayloadCrt.Klog("sp:cpb:autostart-off\n\0"u8);
     }
 
     
